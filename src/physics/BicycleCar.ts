@@ -124,10 +124,10 @@ export class BicycleCar {
     const lateralVec = right.clone().multiplyScalar(lateralForceFront + lateralForceRear);
 
     const totalForce = forceVec.add(lateralVec);
-    this.body.applyForce({ x: totalForce.x, y: totalForce.y, z: totalForce.z }, true);
+    this.body.addForce({ x: totalForce.x, y: totalForce.y, z: totalForce.z }, true);
 
     const torque = up.clone().multiplyScalar(this.steeringAngle * speedForward * tireGripFront * 0.5);
-    this.body.applyTorque({ x: torque.x, y: torque.y, z: torque.z }, true);
+    this.body.addTorque({ x: torque.x, y: torque.y, z: torque.z }, true);
 
     this.slip = (Math.abs(lateralForceRear) + Math.abs(lateralForceFront)) / Math.max(1, speed * 50);
     this.rpm = 900 + Math.abs(speedForward) * 120;
