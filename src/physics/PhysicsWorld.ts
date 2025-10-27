@@ -9,6 +9,8 @@ export type PhysicsInitResult = {
 };
 
 const FIXED_STEP = 1 / 100;
+const MAX_SUBSTEPS = 6;
+const MAX_ACCUMULATED_TIME = FIXED_STEP * MAX_SUBSTEPS;
 
 export class PhysicsWorld {
   private world!: RAPIER.World;
@@ -46,9 +48,16 @@ export class PhysicsWorld {
 
   step(dt: number, controls: CarControls) {
     if (!this.car) return;
-    this.accumulator += dt;
+    if (!Number.isFinite(dt) || dt <= 0) {
+      this.interpolationAlpha = 0;
+      return;
+    }
+
+    const clampedDt = Math.min(dt, MAX_ACCUMULATED_TIME);
+    this.accumulator = Math.min(this.accumulator + clampedDt, MAX_ACCUMULATED_TIME);
     this.car.setControls(controls);
 
+    let steps = 0;
     while (this.accumulator >= FIXED_STEP) {
       const previous = this.car.getTransform();
       this.lastTransform = {
@@ -63,6 +72,12 @@ export class PhysicsWorld {
         rotation: current.rotation.clone(),
       };
       this.accumulator -= FIXED_STEP;
+
+      steps += 1;
+      if (steps >= MAX_SUBSTEPS) {
+        this.accumulator = 0;
+        break;
+      }
     }
     this.interpolationAlpha = this.accumulator / FIXED_STEP;
   }
@@ -99,31 +114,51 @@ export class PhysicsWorld {
   private buildStaticColliders() {
     const groundCollider = RAPIER.ColliderDesc.cuboid(200, 0.2, 200)
       .setTranslation(0, -0.2, 0)
-      .setFriction(1.5)
+      .setFriction(1.2)
       .setRestitution(0.05);
     this.world.createCollider(groundCollider);
 
-    const segments = 64;
-    const radiusX = 45;
-    const radiusZ = 25;
-    const wallHeight = 3;
+    const segments = 96;
+    const wallHeight = 2.8;
+    const wallThickness = 0.6;
+    const halfWidth = this.track.width / 2;
     for (let i = 0; i < segments; i++) {
-      const angle = (i / segments) * Math.PI * 2;
-      const nextAngle = ((i + 1) / segments) * Math.PI * 2;
-      const x1 = Math.cos(angle) * radiusX;
-      const z1 = Math.sin(angle) * radiusZ;
-      const x2 = Math.cos(nextAngle) * radiusX;
-      const z2 = Math.sin(nextAngle) * radiusZ;
-      const midX = (x1 + x2) / 2;
-      const midZ = (z1 + z2) / 2;
-      const length = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
-      const rotation = Math.atan2(z2 - z1, x2 - x1);
-      const collider = RAPIER.ColliderDesc.cuboid(length / 2, wallHeight / 2, 1)
-        .setTranslation(midX, wallHeight / 2, midZ)
-        .setRotation({ x: 0, y: Math.sin(rotation / 2), z: 0, w: Math.cos(rotation / 2) })
-        .setRestitution(0.2)
-        .setFriction(1.2);
-      this.world.createCollider(collider);
+      const t1 = i / segments;
+      const t2 = (i + 1) / segments;
+      const p1 = this.track.curve.getPointAt(t1);
+      const p2 = this.track.curve.getPointAt(t2);
+      const mid = p1.clone().add(p2).multiplyScalar(0.5);
+      const forward = p2.clone().sub(p1);
+      const length = Math.max(4, forward.length());
+      forward.normalize();
+      const yaw = Math.atan2(forward.x, forward.z);
+      const up = new Vector3(0, 1, 0);
+      const lateral = new Vector3().crossVectors(up, forward).normalize();
+      const baseHeight = (p1.y + p2.y) / 2;
+
+      const roadCollider = RAPIER.ColliderDesc.cuboid(length / 2, 0.1, halfWidth)
+        .setTranslation(mid.x, baseHeight - 0.05, mid.z)
+        .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
+        .setFriction(2.4)
+        .setRestitution(0.02);
+      this.world.createCollider(roadCollider);
+
+      const guardOffset = halfWidth + wallThickness * 0.5;
+      const leftCenter = mid.clone().add(lateral.clone().multiplyScalar(guardOffset));
+      const rightCenter = mid.clone().add(lateral.clone().multiplyScalar(-guardOffset));
+
+      const wallColliderLeft = RAPIER.ColliderDesc.cuboid(length / 2, wallHeight / 2, wallThickness / 2)
+        .setTranslation(leftCenter.x, baseHeight + wallHeight / 2, leftCenter.z)
+        .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
+        .setFriction(0.9)
+        .setRestitution(0.1);
+      const wallColliderRight = RAPIER.ColliderDesc.cuboid(length / 2, wallHeight / 2, wallThickness / 2)
+        .setTranslation(rightCenter.x, baseHeight + wallHeight / 2, rightCenter.z)
+        .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
+        .setFriction(0.9)
+        .setRestitution(0.1);
+      this.world.createCollider(wallColliderLeft);
+      this.world.createCollider(wallColliderRight);
     }
   }
 }
