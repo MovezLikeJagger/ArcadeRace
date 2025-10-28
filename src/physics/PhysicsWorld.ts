@@ -9,6 +9,8 @@ export type PhysicsInitResult = {
 };
 
 const FIXED_STEP = 1 / 100;
+const MAX_SUBSTEPS = 6;
+const MAX_ACCUMULATED_TIME = FIXED_STEP * MAX_SUBSTEPS;
 
 export class PhysicsWorld {
   private world!: RAPIER.World;
@@ -46,9 +48,16 @@ export class PhysicsWorld {
 
   step(dt: number, controls: CarControls) {
     if (!this.car) return;
-    this.accumulator += dt;
+    if (!Number.isFinite(dt) || dt <= 0) {
+      this.interpolationAlpha = 0;
+      return;
+    }
+
+    const clampedDt = Math.min(dt, MAX_ACCUMULATED_TIME);
+    this.accumulator = Math.min(this.accumulator + clampedDt, MAX_ACCUMULATED_TIME);
     this.car.setControls(controls);
 
+    let steps = 0;
     while (this.accumulator >= FIXED_STEP) {
       const previous = this.car.getTransform();
       this.lastTransform = {
@@ -63,6 +72,12 @@ export class PhysicsWorld {
         rotation: current.rotation.clone(),
       };
       this.accumulator -= FIXED_STEP;
+
+      steps += 1;
+      if (steps >= MAX_SUBSTEPS) {
+        this.accumulator = 0;
+        break;
+      }
     }
     this.interpolationAlpha = this.accumulator / FIXED_STEP;
   }
